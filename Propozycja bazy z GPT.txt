@@ -1,0 +1,82 @@
+-- Tworzenie tabeli Books
+CREATE TABLE Books (
+    book_id SERIAL PRIMARY KEY, -- ID książki
+    title VARCHAR(255) NOT NULL, -- Tytuł książki
+    author VARCHAR(255) NOT NULL, -- Autor książki
+    isbn VARCHAR(13), -- Numer ISBN
+    genre VARCHAR(100), -- Gatunek książki
+    publication_year INTEGER, -- Rok wydania
+    available BOOLEAN NOT NULL DEFAULT TRUE, -- Dostępność książki
+    shelf_location VARCHAR(50) -- Lokalizacja na półce
+);
+
+-- Tworzenie tabeli Users
+CREATE TABLE Users (
+    user_id SERIAL PRIMARY KEY, -- ID użytkownika
+    first_name VARCHAR(100) NOT NULL, -- Imię użytkownika
+    last_name VARCHAR(100) NOT NULL, -- Nazwisko użytkownika
+    email VARCHAR(255), -- Adres email użytkownika
+    phone_number VARCHAR(15), -- Numer telefonu użytkownika
+    address TEXT, -- Adres użytkownika
+    password_hash VARCHAR(255) NOT NULL -- Zaszyfrowane hasło użytkownika
+);
+
+-- Tworzenie tabeli Transactions
+CREATE TABLE Transactions (
+    transaction_id SERIAL PRIMARY KEY, -- ID transakcji
+    user_id INTEGER REFERENCES Users(user_id), -- ID użytkownika związany z transakcją
+    book_id INTEGER REFERENCES Books(book_id), -- ID książki związany z transakcją
+    checkout_date DATE DEFAULT CURRENT_DATE, -- Data wypożyczenia
+    due_date DATE, -- Planowana data zwrotu
+    returned BOOLEAN DEFAULT FALSE -- Informacja o zwróceniu książki
+);
+
+-- Tworzenie tabeli NFC_RFID_Tags
+CREATE TABLE NFC_RFID_Tags (
+    tag_id SERIAL PRIMARY KEY, -- ID tagu NFC/RFID
+    book_id INTEGER REFERENCES Books(book_id), -- ID książki związany z tagiem
+    nfc_serial_number VARCHAR(50), -- Numer seryjny NFC
+    rfid_serial_number VARCHAR(50) -- Numer seryjny RFID
+);
+
+-- Tworzenie tabeli BookStatus
+CREATE TABLE BookStatus (
+    book_id INTEGER PRIMARY KEY REFERENCES Books(book_id), -- ID książki związany ze statusem
+    status VARCHAR(20) NOT NULL CHECK (status IN ('Available', 'Borrowed')) -- Status dostępności książki
+);
+
+-- Wprowadzenie wartości początkowych do tabeli BookStatus
+INSERT INTO BookStatus (book_id, status)
+SELECT book_id, 'Available' FROM Books;
+
+-- Aktualizacja statusu książki po wypożyczeniu
+CREATE OR REPLACE FUNCTION update_book_status() RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        UPDATE BookStatus SET status = 'Borrowed' WHERE book_id = NEW.book_id;
+    ELSIF TG_OP = 'DELETE' THEN
+        UPDATE BookStatus SET status = 'Available' WHERE book_id = OLD.book_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Tworzenie wyzwalacza do aktualizacji statusu książki po dodaniu lub usunięciu rekordu w tabeli Transactions
+CREATE TRIGGER tr_update_book_status
+AFTER INSERT OR DELETE ON Transactions
+FOR EACH ROW
+EXECUTE FUNCTION update_book_status();
+
+-- Aktualizacja pola password po dodaniu nowego użytkownika
+CREATE OR REPLACE FUNCTION update_password_hash() RETURNS TRIGGER AS $$
+BEGIN
+    NEW.password_hash := crypt(NEW.password_hash, gen_salt('bf', 8)); -- Szyfrowanie hasła
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Tworzenie wyzwalacza do aktualizacji hasła po dodaniu nowego użytkownika
+CREATE TRIGGER tr_update_password_hash
+BEFORE INSERT ON Users
+FOR EACH ROW
+EXECUTE FUNCTION update_password_hash();
